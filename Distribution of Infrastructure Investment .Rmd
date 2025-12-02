@@ -1,0 +1,170 @@
+---
+title: "story 1"
+output: html_document
+date: "2025-09-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Problem Statement 
+The accompanying Excel file provides data on the current distribution of Infrastructure Investment and Jobs Act (IIJA) funding across U.S. States and Territories.
+
+This analysis aims to explore the following questions through data visualizations:
+ - Is the funding distribution equitable when adjusted for the population of each State and Territory, or does it reveal potential bias?
+ - Does the allocation appear to align with or favor the political interests of the Biden administration?
+
+
+### Note: 
+#### Rationale for Excluding U.S. Territories from This Analysis
+U.S. territories such as Puerto Rico, Guam, and American Samoa are excluded from this analysis due to their unique political status. These territories lack voting representation in Congress and do not participate in presidential elections, limiting their influence on federal policy and funding decisions.
+
+This exclusion is grounded in the Insular Cases—early 20th-century Supreme Court rulings that determined the U.S. Constitution does not fully apply to territories. As legal scholar Christina Duffy Burnett notes:
+
+"The Insular Cases installed a doctrine of territorial deannexation... shaping life for more than four million U.S. citizens in Puerto Rico and the other remaining nonstate possessions."
+
+As a result, territories are often excluded from federal funding formulas, making them unsuitable for inclusion in an analysis focused on population-based or politically influenced funding equity.
+
+
+### Data Collection and Preparation
+
+Installed libraries: 
+ 
+```{r}
+library(readxl)
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+Load the IIJA funding data into a dataframe and display its contents:
+
+```{r}
+iija_data <- read_excel("IIJA FUNDING AS OF MARCH 2023.xlsx")
+print(iija_data)
+```
+
+Clean the IIJA funding data by renaming columns and standardizing state names:
+
+```{r}
+# Clean IIJA funding data 
+iija_data <- read_excel("IIJA FUNDING AS OF MARCH 2023.xlsx")
+colnames(iija_data) <- c("State", "Total")
+iija_data$State <- trimws(iija_data$State)
+iija_data$State <- tools::toTitleCase(tolower(iija_data$State))
+
+print(iija_data)
+```
+
+Load and clean the 2023 population data from the U.S. Census Bureau. This includes filtering for state-level entries, selecting relevant columns, renaming them, and formatting state names:
+
+```{r}
+# Load and clean population data
+population_data <- read_csv("population-2023.csv")
+print(population_data)
+
+clean_population <- population_data %>%
+  filter(grepl("^0400000US", GEO_ID)) %>%
+  select(NAME, S0101_C01_001E) %>%
+  rename(State = NAME, Population_2023 = S0101_C01_001E) %>%
+  mutate(State = trimws(State),
+         State = tools::toTitleCase(tolower(State)))
+
+print(clean_population)
+```
+
+Merge the cleaned IIJA funding and population datasets, then compute per capita funding for each state:
+
+```{r}
+# Merge and calculate per capita funding
+merged_data <- left_join(iija_data, clean_population, by = "State") %>%
+  mutate(Funding_Per_Capita = (Total * 1e9) / as.numeric(Population_2023)) %>%
+  filter(!is.na(Funding_Per_Capita))  # Remove rows with NA values
+
+print(merged_data)
+```
+
+Incorporate political alignment data from the MIT Election Data and Science Lab by identifying the winning party in each state during the 2020 U.S. presidential election, then merge it with the existing dataset:
+
+```{r}
+# Add political alignment data from MIT Election Lab
+# Source: MIT Election Data and Science Lab, 2017, "U.S. President 1976–2020", 
+# https://doi.org/10.7910/DVN/42MVDX, Harvard Dataverse, V8
+
+election_data <- read_csv("1976-2020-president.csv")
+
+# Filter for 2020 presidential election
+election_2020 <- election_data %>%
+  filter(year == 2020, office == "US PRESIDENT")
+print(election_2020)
+
+# Determine the winning party per state
+state_winners <- election_2020 %>%
+  group_by(state) %>%
+  slice_max(order_by = candidatevotes, n = 1, with_ties = FALSE) %>%
+  mutate(Political_Alignment = case_when(
+    party_simplified == "DEMOCRAT" ~ "Democratic",
+    party_simplified == "REPUBLICAN" ~ "Republican",
+    TRUE ~ "Other"
+  )) %>%
+  select(State = state, Political_Alignment)
+print(state_winners)
+
+state_winners$State <- tools::toTitleCase(tolower(trimws(state_winners$State)))
+print(state_winners)
+
+# Merge with existing data
+merged_data <- left_join(merged_data, state_winners, by = "State")
+print(merged_data)
+
+merged_data <- merged_data %>%
+  select(-matches("Political_Alignment\..*")) %>% # Remove any column like Political_Alignment.x, .y
+  rename(Political_Alignment = Political_Alignment) %>% 
+  filter(!is.na(Political_Alignment))
+print(merged_data)
+```
+
+### Data Analysis
+
+```{r}
+# Visualize equity
+ggplot(merged_data, aes(x = reorder(State, Funding_Per_Capita), y = Funding_Per_Capita)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "IIJA Funding Per Capita by State", x = "State", y = "Funding Per Capita (USD)")
+```
+
+```{r}
+# Visualize political bias
+ggplot(merged_data, aes(x = Political_Alignment, y = Funding_Per_Capita, fill = Political_Alignment)) +
+  geom_boxplot() +
+  labs(title = "Funding Per Capita by Political Alignment", x = "Political Alignment", y = "Funding Per Capita (USD)")
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+
+# Plot: Funding Per Capita by State, colored by Political Alignment
+ggplot(merged_data, aes(x = reorder(State, Funding_Per_Capita), y = Funding_Per_Capita, fill = Political_Alignment)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "IIJA Funding Per Capita by State and Political Alignment",
+       x = "State",
+       y = "Funding Per Capita (USD)") +
+  theme_minimal()
+
+# Summary statistics by political alignment
+merged_data %>%
+  group_by(Political_Alignment) %>%
+  summarise(
+    Mean_Funding = mean(Funding_Per_Capita),
+    SD_Funding = sd(Funding_Per_Capita),
+    Min_Funding = min(Funding_Per_Capita),
+    Max_Funding = max(Funding_Per_Capita),
+    .groups = "drop"
+  )
+```
+
