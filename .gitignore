@@ -1,0 +1,6 @@
+*.csv
+*.jsonl
+*.zip
+.DS_Store
+.idea/
+.ipynb_checkpoints/
